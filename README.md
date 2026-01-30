@@ -43,10 +43,8 @@ Untuk menjalankan proyek ini di lingkungan pengembangan lokal Anda:
 1. Clone repository:
 
 ```bash
-git clone https://github.com/your-username/karir-mengasihi.git
+git clone https://github.com/carlosmarpaung08/karir-mengasihi.git
 ```
-
-> Ganti `your-username` dengan username GitHub Anda.
 
 2. Masuk ke direktori proyek:
 
