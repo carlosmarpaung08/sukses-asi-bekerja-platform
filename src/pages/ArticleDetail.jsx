@@ -1,10 +1,194 @@
-import React from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import articles from '../data/articles';
 
 function ArticleDetail() {
   const { slug } = useParams();
   const article = articles.find(art => art.slug === slug);
+
+  // TTS States
+  const [isSpeaking, setIsSpeaking] = useState(false);
+  const [isPaused, setIsPaused] = useState(false);
+  const [speechRate, setSpeechRate] = useState(1);
+  const [supportsTTS, setSupportsTTS] = useState(true);
+  const utteranceRef = useRef(null);
+  const textContentRef = useRef('');
+  const textChunksRef = useRef([]);
+  const currentChunkIndexRef = useRef(0);
+  const isStoppedByUserRef = useRef(false);
+
+  // Check TTS support on mount
+  useEffect(() => {
+    if (!('speechSynthesis' in window)) {
+      setSupportsTTS(false);
+    }
+  }, []);
+
+  // Extract text content from article blocks
+  useEffect(() => {
+    if (article && article.blocks) {
+      const textBlocks = article.blocks
+        .filter(block => block.type === 'text')
+        .map(block => {
+          // Remove HTML tags and get clean text
+          const tempDiv = document.createElement('div');
+          tempDiv.innerHTML = block.content;
+          return tempDiv.textContent || tempDiv.innerText || '';
+        })
+        .join(' ');
+      
+      const fullText = `${article.title}. ${article.description}. ${textBlocks}`;
+      textContentRef.current = fullText;
+      
+      // Split into chunks (max ~500 characters per chunk for better reliability)
+      const chunkSize = 500;
+      const chunks = [];
+      
+      // Split by sentences to avoid cutting in the middle
+      const sentences = fullText.match(/[^.!?]+[.!?]+/g) || [fullText];
+      let currentChunk = '';
+      
+      sentences.forEach(sentence => {
+        if ((currentChunk + sentence).length > chunkSize && currentChunk.length > 0) {
+          chunks.push(currentChunk.trim());
+          currentChunk = sentence;
+        } else {
+          currentChunk += sentence;
+        }
+      });
+      
+      if (currentChunk.trim().length > 0) {
+        chunks.push(currentChunk.trim());
+      }
+      
+      textChunksRef.current = chunks;
+      currentChunkIndexRef.current = 0;
+    }
+  }, [article]);
+
+  // Cleanup speech on unmount or article change
+  useEffect(() => {
+    return () => {
+      if (window.speechSynthesis) {
+        window.speechSynthesis.cancel();
+      }
+    };
+  }, [slug]);
+
+  const speakChunk = (chunkIndex) => {
+    if (chunkIndex >= textChunksRef.current.length) {
+      // All chunks completed
+      setIsSpeaking(false);
+      setIsPaused(false);
+      currentChunkIndexRef.current = 0;
+      return;
+    }
+
+    // Check if user manually stopped
+    if (isStoppedByUserRef.current) {
+      return;
+    }
+
+    const utterance = new SpeechSynthesisUtterance(textChunksRef.current[chunkIndex]);
+    utterance.lang = 'id-ID';
+    utterance.rate = speechRate;
+    utterance.pitch = 1;
+    utterance.volume = 1;
+
+    utterance.onstart = () => {
+      setIsSpeaking(true);
+      setIsPaused(false);
+    };
+
+    utterance.onend = () => {
+      // Check again before moving to next chunk
+      if (isStoppedByUserRef.current) {
+        return;
+      }
+      // Move to next chunk
+      currentChunkIndexRef.current = chunkIndex + 1;
+      speakChunk(currentChunkIndexRef.current);
+    };
+
+    utterance.onerror = (event) => {
+      console.error('Speech error:', event);
+      
+      // If user stopped, don't continue
+      if (isStoppedByUserRef.current) {
+        setIsSpeaking(false);
+        setIsPaused(false);
+        return;
+      }
+      
+      if (event.error === 'interrupted') {
+        // If interrupted by browser (not user), try to continue with next chunk
+        currentChunkIndexRef.current = chunkIndex + 1;
+        setTimeout(() => {
+          speakChunk(currentChunkIndexRef.current);
+        }, 100);
+      } else {
+        setIsSpeaking(false);
+        setIsPaused(false);
+      }
+    };
+
+    utteranceRef.current = utterance;
+    window.speechSynthesis.speak(utterance);
+  };
+
+  const handlePlay = () => {
+    if (!supportsTTS) {
+      alert('Browser Anda tidak mendukung fitur Text-to-Speech');
+      return;
+    }
+
+    if (isPaused) {
+      // Resume if paused
+      window.speechSynthesis.resume();
+      setIsPaused(false);
+      setIsSpeaking(true);
+    } else {
+      // Start new speech from beginning or current chunk
+      isStoppedByUserRef.current = false; // Reset stop flag
+      window.speechSynthesis.cancel();
+      speakChunk(currentChunkIndexRef.current);
+    }
+  };
+
+  const handlePause = () => {
+    if (window.speechSynthesis && isSpeaking) {
+      isStoppedByUserRef.current = false; // Pause is not a stop
+      window.speechSynthesis.pause();
+      setIsPaused(true);
+      setIsSpeaking(false);
+    }
+  };
+
+  const handleStop = () => {
+    if (window.speechSynthesis) {
+      isStoppedByUserRef.current = true; // Set flag that user manually stopped
+      window.speechSynthesis.cancel();
+      setIsSpeaking(false);
+      setIsPaused(false);
+      currentChunkIndexRef.current = 0; // Reset to beginning
+    }
+  };
+
+  const handleSpeedChange = (newRate) => {
+    setSpeechRate(newRate);
+    
+    // If currently speaking, restart with new rate from current chunk
+    if (isSpeaking || isPaused) {
+      const savedIndex = currentChunkIndexRef.current;
+      isStoppedByUserRef.current = true; // Temporarily set to stop current playback
+      handleStop();
+      setTimeout(() => {
+        currentChunkIndexRef.current = savedIndex;
+        isStoppedByUserRef.current = false; // Reset before playing
+        handlePlay();
+      }, 100);
+    }
+  };
 
   if (!article) {
     return (
@@ -91,6 +275,117 @@ function ArticleDetail() {
               {article.description}
             </p>
           </div>
+
+          {/* TTS Control Bar */}
+          {supportsTTS && (
+            <div className="max-w-4xl mx-auto mb-8">
+              <div className="bg-gradient-to-r from-pink-50 to-purple-50 rounded-2xl p-6 shadow-lg border border-pink-100">
+                <div className="flex flex-col md:flex-row items-center justify-between gap-4">
+                  {/* Left side - Title and Icon */}
+                  <div className="flex items-center gap-3">
+                    <div className="w-12 h-12 bg-gradient-to-br from-pink-500 to-purple-500 rounded-xl flex items-center justify-center shadow-md">
+                      <svg className="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.536 8.464a5 5 0 010 7.072m2.828-9.9a9 9 0 010 12.728M5.586 15.536a5 5 0 001.414 1.414m2.828-9.9a9 9 0 012.828 2.828" />
+                      </svg>
+                    </div>
+                    <div>
+                      <h3 className="text-sm font-semibold text-gray-800">Dengarkan Artikel</h3>
+                      <p className="text-xs text-gray-500">Text-to-Speech</p>
+                    </div>
+                  </div>
+
+                  {/* Middle - Control Buttons */}
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={handlePlay}
+                      disabled={isSpeaking && !isPaused}
+                      className={`flex items-center gap-2 px-4 py-2 rounded-xl font-semibold text-sm transition-all duration-300 ${
+                        isSpeaking && !isPaused
+                          ? 'bg-gray-300 text-gray-500 cursor-not-allowed'
+                          : 'bg-gradient-to-r from-pink-500 to-purple-500 hover:from-pink-600 hover:to-purple-600 text-white shadow-md hover:shadow-lg transform hover:-translate-y-0.5'
+                      }`}
+                    >
+                      <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
+                        <path d="M8 5v14l11-7z"/>
+                      </svg>
+                      {isPaused ? 'Lanjutkan' : 'Putar'}
+                    </button>
+
+                    <button
+                      onClick={handlePause}
+                      disabled={!isSpeaking}
+                      className={`flex items-center gap-2 px-4 py-2 rounded-xl font-semibold text-sm transition-all duration-300 ${
+                        !isSpeaking
+                          ? 'bg-gray-300 text-gray-500 cursor-not-allowed'
+                          : 'bg-white hover:bg-gray-50 text-gray-700 border-2 border-pink-200 shadow-md hover:shadow-lg transform hover:-translate-y-0.5'
+                      }`}
+                    >
+                      <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
+                        <path d="M6 4h4v16H6V4zm8 0h4v16h-4V4z"/>
+                      </svg>
+                      Jeda
+                    </button>
+
+                    <button
+                      onClick={handleStop}
+                      disabled={!isSpeaking && !isPaused}
+                      className={`flex items-center gap-2 px-4 py-2 rounded-xl font-semibold text-sm transition-all duration-300 ${
+                        !isSpeaking && !isPaused
+                          ? 'bg-gray-300 text-gray-500 cursor-not-allowed'
+                          : 'bg-white hover:bg-gray-50 text-gray-700 border-2 border-pink-200 shadow-md hover:shadow-lg transform hover:-translate-y-0.5'
+                      }`}
+                    >
+                      <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
+                        <path d="M6 6h12v12H6z"/>
+                      </svg>
+                      Stop
+                    </button>
+                  </div>
+
+                  {/* Right side - Speed Control */}
+                  <div className="flex items-center gap-3">
+                    <span className="text-sm font-medium text-gray-700">Kecepatan:</span>
+                    <div className="flex gap-1">
+                      {[0.75, 1, 1.25, 1.5].map((rate) => (
+                        <button
+                          key={rate}
+                          onClick={() => handleSpeedChange(rate)}
+                          className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all duration-200 ${
+                            speechRate === rate
+                              ? 'bg-gradient-to-r from-pink-500 to-purple-500 text-white shadow-md'
+                              : 'bg-white text-gray-600 hover:bg-pink-50 border border-pink-200'
+                          }`}
+                        >
+                          {rate}x
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Status Indicator */}
+                {(isSpeaking || isPaused) && (
+                  <div className="mt-4 pt-4 border-t border-pink-200">
+                    <div className="flex items-center justify-center gap-2">
+                      {isSpeaking && (
+                        <>
+                          <div className="flex gap-1">
+                            <div className="w-1 h-4 bg-pink-500 rounded-full animate-pulse"></div>
+                            <div className="w-1 h-4 bg-purple-500 rounded-full animate-pulse delay-75"></div>
+                            <div className="w-1 h-4 bg-pink-500 rounded-full animate-pulse delay-150"></div>
+                          </div>
+                          <span className="text-sm font-medium text-gray-700">Sedang memutar...</span>
+                        </>
+                      )}
+                      {isPaused && (
+                        <span className="text-sm font-medium text-gray-700">⏸️ Dijeda</span>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
         </div>
       </section>
 

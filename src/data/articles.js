@@ -1,9 +1,3 @@
-import PosisiMenyusuiBenar from '../assets/images/posisi-menyusui-benar.png';
-import PerlekatanBaik from '../assets/images/perlekatan-baik.png';
-import PerlekatanBaik2 from '../assets/images/perlekatan-baik2.png';
-import AsiVsFormula from '../assets/images/asi-vs-formula.png';
-import MemerahAsiManual from '../assets/images/memerah-asi-manual.png';
-
 const articles = [
   {
     id: 1,

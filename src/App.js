@@ -6,8 +6,20 @@ import Home from './pages/Home';
 import ArticleList from './pages/ArticleList';
 import ArticleDetail from './pages/ArticleDetail';
 import Contact from './pages/Contact';
+import MaintenancePage from './pages/MaintenancePage';
+
+// ========================================
+// MAINTENANCE MODE TOGGLE
+// Set true  = tampilkan halaman maintenance
+// Set false = tampilkan halaman asli
+// ========================================
+const MAINTENANCE_MODE = true;
 
 function App() {
+  if (MAINTENANCE_MODE) {
+    return <MaintenancePage />;
+  }
+
   return (
     <Router>
       <div className="App min-h-screen flex flex-col">
